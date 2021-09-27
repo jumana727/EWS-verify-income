@@ -56,6 +56,160 @@ app.get("/consent/:mobileNumber", (req, res) => {
       });
   });
 
+  app.post("/Consent/Notification", (req, res) => {
+    var body = req.body;
+    console.log(body);
+  
+    let headers = req.headers;
+    let obj = JSON.parse(fs.readFileSync("./keys/setu_public_key.json", "utf8"));
+    let pem = jwkToPem(obj);
+  
+    if (signature.validateDetachedJWS(headers["x-jws-signature"], body, pem)) {
+      let consent_id = body.ConsentStatusNotification.consentId;
+      let consent_status = body.ConsentStatusNotification.consentStatus;
+  
+      localStorage.setItem("consent_id", consent_id);
+      localStorage.setItem("consent_status", consent_status);
+  
+      if (consent_status === "ACTIVE") {
+        fetchSignedConsent(consent_id);
+      }
+  
+      const dateNow = new Date();
+      res.send({
+        ver: "1.0",
+        timestamp: dateNow.toISOString(),
+        txnid: uuid.create_UUID(),
+        response: "OK",
+      });
+    } else {
+      res.send("Invalid Signature");
+    }
+  });
+
+  const fetchSignedConsent = (consent_id) => {
+    const privateKey = fs.readFileSync("./keys/private_key.pem", {
+      encoding: "utf8",
+    });
+    let detachedJWS = signature.makeDetachedJWS(
+      privateKey,
+      "/Consent/" + consent_id
+    );
+    var requestConfig = {
+      method: "get",
+      url: config.api_url + "/Consent/" + consent_id,
+      headers: {
+        "Content-Type": "application/json",
+        client_api_key: '1b0a81b0-a783-45be-b99e-8f7f352420ff',
+        "x-jws-signature": detachedJWS,
+      },
+    };
+  
+    axios(requestConfig)
+      .then(function (response) {
+        fi_data_request(response.data.signedConsent, consent_id);
+      })
+      .catch(function (error) {
+        console.log(error);
+        console.log("Error");
+      });
+  };
+
+  const fi_data_request = async (signedConsent, consent_id) => {
+    let keys = await requestData.generateKeyMaterial();
+    let request_body = requestData.requestDataBody(
+      signedConsent,
+      consent_id,
+      keys["KeyMaterial"]
+    );
+    const privateKey = fs.readFileSync("./keys/private_key.pem", {
+      encoding: "utf8",
+    });
+    let detachedJWS = signature.makeDetachedJWS(privateKey, request_body);
+    var requestConfig = {
+      method: "post",
+      url: config.api_url + "/FI/request",
+      headers: {
+        "Content-Type": "application/json",
+        client_api_key: '1b0a81b0-a783-45be-b99e-8f7f352420ff',
+        "x-jws-signature": detachedJWS,
+      },
+      data: request_body,
+    };
+  
+    axios(requestConfig)
+      .then(function (response) {
+        // Ideally, after this step we save the session ID in your DB and wait for FI notification and then proceed.
+        fi_data_fetch(
+          response.data.sessionId,
+          keys["privateKey"],
+          keys["KeyMaterial"]
+        );
+      })
+      .catch(function (error) {
+        console.log(error);
+        console.log("Error");
+      });
+  };
+  
+  ////// FI NOTIFICATION
+  
+  app.post("/FI/Notification", (req, res) => {
+    var body = req.body;
+    let headers = req.headers;
+    let obj = JSON.parse(fs.readFileSync("./keys/setu_public_key.json", "utf8"));
+    let pem = jwkToPem(obj);
+  
+    if (signature.validateDetachedJWS(headers["x-jws-signature"], body, pem)) {
+      // Do something with body
+      // Ideally you wait for this notification and then proceed with Data fetch request.
+      const dateNow = new Date();
+      res.send({
+        ver: "1.0",
+        timestamp: dateNow.toISOString(),
+        txnid: uuid.create_UUID(),
+        response: "OK",
+      });
+    } else {
+      res.send("Invalid Signature");
+    }
+  });
+  
+  ////// FETCH DATA REQUEST
+  
+  const fi_data_fetch = (session_id, encryption_privateKey, keyMaterial) => {
+    const privateKey = fs.readFileSync("./keys/private_key.pem", {
+      encoding: "utf8",
+    });
+    let detachedJWS = signature.makeDetachedJWS(
+      privateKey,
+      "/FI/fetch/" + session_id
+    );
+    var requestConfig = {
+      method: "get",
+      url: config.api_url + "/FI/fetch/" + session_id,
+      headers: {
+        "Content-Type": "application/json",
+        client_api_key: '1b0a81b0-a783-45be-b99e-8f7f352420ff',
+        "x-jws-signature": detachedJWS,
+      },
+    };
+    axios(requestConfig)
+      .then(function (response) {
+        decrypt_data(response.data.FI, encryption_privateKey, keyMaterial);
+      })
+      .catch(function (error) {
+        console.log(error);
+        console.log("Error");
+      });
+  };
+  
+  ///// GET DATA
+  
+  app.get("/get-data", (req, res) => {
+    res.send(JSON.parse(localStorage.getItem("jsonData")));
+  });
+
 
 app.get('/',(req,res)=>{
     res.send('Hello');
