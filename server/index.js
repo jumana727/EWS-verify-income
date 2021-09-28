@@ -45,7 +45,8 @@ app.get("/consent/:mobileNumber", (req, res) => {
       .then(function (response) {
         let url =
         "https://anumati.setu.co/" +
-        response.data.ConsentHandle;
+        response.data.ConsentHandle +
+        "?redirect_url=https://ews-verify-income.herokuapp.com/redirect";
         res.send(url);
        
         console.log(JSON.stringify(response.data));
